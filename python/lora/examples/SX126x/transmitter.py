@@ -7,9 +7,9 @@ from pylorawan.encryption import aes128_encrypt, generate_mic
 from pylorawan.common import encrypt_frm_payload, generate_mic_mac_payload
 from pylorawan.message import MType, MHDR, FCtrlUplink, FHDRUplink, MACPayloadUplink, PHYPayload
 # LoRaWAN parameters
-dev_addr = 0xFA83B2A1  # Your device address
-app_s_key = (0xB03E77747853D8C9610C355AE0873212).to_bytes(16, "big")  # Your AppSKey
-nwk_s_key = (0x65C4660F6CF17E89F696AC27D731F809).to_bytes(16, "big")  # Your NwkSKey
+dev_addr = 0x01020304 # Your device address
+app_s_key = (0x01020304050607080910111213141516).to_bytes(16, "big")  # Your AppSKey
+nwk_s_key = (0x01020304050607080910111213141516).to_bytes(16, "big")  # Your NwkSKey
 frame_counter = 0
 
 # New function that prepares LoRaWAN packet
