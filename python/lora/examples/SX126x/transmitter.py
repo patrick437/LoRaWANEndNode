@@ -84,31 +84,26 @@ def send_data(data_bytes):
     message = data_bytes
     #messageList = list(message)
     #for i in range(len(messageList)) : messageList[i] = ord(messageList[i])
-    counter = 0
+    
 
     # Transmit message continuously
-    while True :
 
-        # Transmit message and counter
-        # write() method must be placed between beginPacket() and endPacket()
-        LoRa.beginPacket()
-        data_list = list(data_bytes)
-        LoRa.write(data_list, len(data_list))
-        LoRa.write([counter], 1)
-        LoRa.endPacket()
 
-        # Print message and counter
-        print(f"{message}  {counter}")
+    # Transmit message and counter
+    # write() method must be placed between beginPacket() and endPacket()
+    LoRa.beginPacket()
+    data_list = list(data_bytes)
+    LoRa.write(data_list, len(data_list))
+    LoRa.endPacket()
 
-        # Wait until modulation process for transmitting packet finish
-        LoRa.wait()
+    # Wait until modulation process for transmitting packet finish
+    LoRa.wait()
 
-        # Print transmit time and data rate
-        print("Transmit time: {0:0.2f} ms | Data rate: {1:0.2f} byte/s".format(LoRa.transmitTime(), LoRa.dataRate()))
+    # Print transmit time and data rate
+    print("Transmit time: {0:0.2f} ms | Data rate: {1:0.2f} byte/s".format(LoRa.transmitTime(), LoRa.dataRate()))
 
-        # Don't load RF module with continous transmit
-        time.sleep(5)
-        counter = (counter + 1) % 256
+    # Don't load RF module with continous transmit
+    time.sleep(5)
 
     try :
         pass
