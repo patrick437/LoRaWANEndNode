@@ -1,0 +1,336 @@
+import sys
+import os
+import time
+import atexit
+import argparse
+import cv2
+import numpy as np
+from functools import lru_cache
+
+# Import IMX500 Camera modules
+from picamera2 import MappedArray, Picamera2
+from picamera2.devices import IMX500
+from picamera2.devices.imx500 import (NetworkIntrinsics, postprocess_nanodet_detection)
+
+# Import LoRaWAN modules
+from LoRaRF import SX126x
+from pylorawan.encryption import aes128_encrypt, generate_mic
+from pylorawan.common import encrypt_frm_payload, generate_mic_mac_payload
+from pylorawan.message import MType, MHDR, FCtrlUplink, FHDRUplink, MACPayloadUplink, PHYPayload
+
+# Custom utilities
+from itkacher.date_utils import DateUtils
+from itkacher.file_utils import FileUtils
+from itkacher.video_recorder import VideoRecorder
+
+# LoRaWAN parameters
+dev_addr = 0x01020304  # Your device address
+app_s_key = (0x01020304050607080910111213141516).to_bytes(16, "big")  # Your AppSKey
+nwk_s_key = (0x01020304050607080910111213141516).to_bytes(16, "big")  # Your NwkSKey
+frame_counter = 0
+
+# Detection parameters
+last_detections = []
+threshold = 0.55
+iou = 0.65
+max_detections = 10
+person_class_id = None  # Will be determined based on the model
+
+class Detection:
+    def __init__(self, coords, category, conf, metadata):
+        """Create a Detection object, recording the bounding box, category and confidence."""
+        self.category = category
+        self.conf = conf
+        self.box = imx500.convert_inference_coords(coords, metadata, picam2)
+
+def prepare_lorawan_packet(payload):
+    """Prepare LoRaWAN packet with encryption and framing"""
+    global frame_counter
+    
+    if frame_counter == 0:
+        frame_counter = load_frame_counter()
+    
+    # Convert to bytes if needed
+    if not isinstance(payload, bytes):
+        payload = bytes(payload)
+    
+    # Create LoRaWAN packet
+    mhdr = MHDR(mtype=MType.UnconfirmedDataUp, major=0)
+    encrypted_payload = encrypt_frm_payload(payload, app_s_key, dev_addr, frame_counter, 0)
+    f_ctrl = FCtrlUplink(adr=False, adr_ack_req=False, ack=False, class_b=False, f_opts_len=0)
+    fhdr = FHDRUplink(dev_addr=dev_addr, f_ctrl=f_ctrl, f_cnt=frame_counter, f_opts=b"")
+    mac_payload = MACPayloadUplink(fhdr=fhdr, f_port=1, frm_payload=encrypted_payload)
+    mic = generate_mic_mac_payload(mhdr, mac_payload, nwk_s_key)
+    phy_payload = PHYPayload(mhdr=mhdr, payload=mac_payload, mic=mic)
+    lorawan_packet = phy_payload.generate()
+    
+    # Increment counter for next transmission
+    frame_counter += 1
+    return lorawan_packet
+
+def send_data(data_bytes):
+    """Initialize LoRa radio and transmit data"""
+    # Begin LoRa radio and set pins
+    busId = 0; csId = 0 
+    resetPin = 18; busyPin = 20; irqPin = 16; txenPin = 6; rxenPin = -1 
+    LoRa = SX126x()
+    
+    print("Begin LoRa radio")
+    if not LoRa.begin(busId, csId, resetPin, busyPin, irqPin, txenPin, rxenPin):
+        raise Exception("Something wrong, can't begin LoRa radio")
+
+    LoRa.setDio2RfSwitch()
+    # Set frequency to 868 Mhz
+    print("Set frequency to 868 Mhz")
+    LoRa.setFrequency(868100000)
+
+    # Set TX power
+    print("Set TX power to +22 dBm")
+    LoRa.setTxPower(22, LoRa.TX_POWER_SX1262)
+
+    # Configure modulation parameters
+    print("Set modulation parameters:\n\tSpreading factor = 7\n\tBandwidth = 125 kHz\n\tCoding rate = 4/5")
+    sf = 7
+    bw = 125000
+    cr = 5
+    LoRa.setLoRaModulation(sf, bw, cr)
+
+    # Configure packet parameters
+    print("Set packet parameters")
+    headerType = LoRa.HEADER_EXPLICIT
+    preambleLength = 12
+    payloadLength = 32
+    crcType = True
+    LoRa.setLoRaPacket(headerType, preambleLength, payloadLength, crcType)
+
+    # Set syncronize word for public network
+    print("Set syncronize word to 0x3444")
+    LoRa.setSyncWord(0x3444)
+
+    print("\n-- Transmitting Detection Data --\n")
+
+    # Transmit message
+    LoRa.beginPacket()
+    data_list = list(data_bytes)
+    LoRa.write(data_list, len(data_list))
+    LoRa.endPacket()
+
+    # Wait until modulation process for transmitting packet finish
+    LoRa.wait()
+
+    # Print transmit time and data rate
+    print("Transmit time: {0:0.2f} ms | Data rate: {1:0.2f} byte/s".format(
+        LoRa.transmitTime(), LoRa.dataRate()))
+
+def save_frame_counter(counter):
+    """Save frame counter to file for persistence across restarts"""
+    with open('frame_counter.txt', 'w') as f:
+        f.write(str(counter))
+        
+def load_frame_counter():
+    """Load frame counter from file"""
+    try:
+        with open('frame_counter.txt', 'r') as f:
+            return int(f.read().strip())
+    except FileNotFoundError:
+        return 0
+        
+def exit_handler():
+    """Handle clean exit by saving frame counter"""
+    global frame_counter
+    save_frame_counter(frame_counter)
+    print("Frame counter saved on exit")
+
+def parse_detections(metadata: dict):
+    """Parse the output tensor into detected objects, scaled to the ISP out."""
+    global last_detections
+    bbox_normalization = intrinsics.bbox_normalization
+
+    np_outputs = imx500.get_outputs(metadata, add_batch=True)
+    input_w, input_h = imx500.get_input_size()
+    if np_outputs is None:
+        return last_detections
+        
+    if intrinsics.postprocess == "nanodet":
+        boxes, scores, classes = \
+            postprocess_nanodet_detection(outputs=np_outputs[0], conf=threshold, iou_thres=iou,
+                                          max_out_dets=max_detections)[0]
+        from picamera2.devices.imx500.postprocess import scale_boxes
+        boxes = scale_boxes(boxes, 1, 1, input_h, input_w, False, False)
+    else:
+        boxes, scores, classes = np_outputs[0][0], np_outputs[1][0], np_outputs[2][0]
+        if bbox_normalization:
+            boxes = boxes / input_h
+
+        boxes = np.array_split(boxes, 4, axis=1)
+        boxes = zip(*boxes)
+
+    last_detections = [
+        Detection(box, category, score, metadata)
+        for box, score, category in zip(boxes, scores, classes)
+        if score > threshold
+    ]
+
+    return last_detections
+
+@lru_cache
+def get_labels():
+    """Get model labels"""
+    labels = intrinsics.labels
+    if intrinsics.ignore_dash_labels:
+        labels = [label for label in labels if label and label != "-"]
+    return labels
+
+def encode_detection_for_lorawan(detection):
+    """Encode detection for efficient LoRaWAN transmission
+    Format: [confidence (1 byte), x (1 byte), y (1 byte), width (1 byte), height (1 byte)]
+    All values normalized to 0-255 range
+    """
+    conf = int(detection.conf * 100)  # Convert confidence to 0-100 range
+    x, y, w, h = detection.box
+    
+    # Normalize coordinates to 0-255 range
+    # Assuming 640x480 resolution - adjust if different
+    x_norm = min(255, int((x / 640) * 255))
+    y_norm = min(255, int((y / 480) * 255))
+    w_norm = min(255, int((w / 640) * 255))
+    h_norm = min(255, int((h / 480) * 255))
+    
+    return bytes([conf, x_norm, y_norm, w_norm, h_norm])
+
+def find_person_class_id():
+    """Find the class ID corresponding to 'person' in the model labels"""
+    labels = get_labels()
+    for i, label in enumerate(labels):
+        if label.lower() in ['person', 'human', 'pedestrian']:
+            return i
+    return None  # Person class not found
+
+def draw_detections(request, stream="main"):
+    """Draw the detections on the display"""
+    detections = last_results
+    if detections is None:
+        return
+    labels = get_labels()
+    with MappedArray(request, stream) as m:
+        for detection in detections:
+            x, y, w, h = detection.box
+            label = f"{labels[int(detection.category)]} ({detection.conf:.2f})"
+
+            # Calculate text size and position
+            (text_width, text_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            text_x = x + 5
+            text_y = y + 15
+
+            # Create a copy of the array to draw the background with opacity
+            overlay = m.array.copy()
+
+            # Draw the background rectangle on the overlay
+            cv2.rectangle(overlay,
+                          (text_x, text_y - text_height),
+                          (text_x + text_width, text_y + baseline),
+                          (255, 255, 255),  # Background color (white)
+                          cv2.FILLED)
+
+            alpha = 0.30
+            cv2.addWeighted(overlay, alpha, m.array, 1 - alpha, 0, m.array)
+
+            # Draw text on top of the background
+            cv2.putText(m.array, label, (text_x, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+
+            # Draw detection box
+            cv2.rectangle(m.array, (x, y), (x + w, y + h), (0, 255, 0, 0), thickness=2)
+
+if __name__ == "__main__":
+    # Set up argument parsing
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--save_tensors', action='store_true', help='Save tensor data')
+    parser.add_argument('--record_video', action='store_true', help='Record video from images')
+    parser.add_argument('--model', type=str, default="./imx500-models-backup/imx500_network_yolov8n_pp.rpk", 
+                      help='Path to the detection model')
+    args = parser.parse_args()
+
+    # Register exit handler to save frame counter
+    atexit.register(exit_handler)
+
+    # Initialize IMX500 with model
+    imx500 = IMX500(args.model)
+    intrinsics = imx500.network_intrinsics
+    
+    # Initialize Picamera2
+    picam2 = Picamera2()
+    config = picam2.create_preview_configuration(
+        main={"size": (640, 480)},
+        transform=imx500.transform,
+        buffer_count=4
+    )
+    picam2.configure(config)
+    picam2.start()
+    
+    # Get person class ID
+    person_class_id = find_person_class_id()
+    if person_class_id is None:
+        print("Warning: Could not find 'person' class in model labels")
+        print("Available classes:", get_labels())
+    else:
+        print(f"Person class ID: {person_class_id}")
+    
+    # Initialize video recorder if needed
+    video_recorder = VideoRecorder() if args.record_video else None
+    
+    try:
+        while True:
+            # Capture and parse detections
+            metadata = picam2.capture_metadata()
+            last_results = parse_detections(metadata)
+            
+            # Filter detections for people
+            people_detections = [
+                detection for detection in last_results
+                if person_class_id is not None and int(detection.category) == person_class_id
+            ]
+            
+            # If people are detected, transmit their data
+            if people_detections:
+                print(f"Detected {len(people_detections)} people in frame")
+                
+                # Create payload with person count and detection data
+                payload = bytes([len(people_detections)])  # First byte is count
+                
+                # Add each person's detection data
+                for detection in people_detections:
+                    payload += encode_detection_for_lorawan(detection)
+                
+                # Prepare and send LoRaWAN packet
+                if len(payload) <= 32:  # Check if payload fits in LoRaWAN packet
+                    lorawan_packet = prepare_lorawan_packet(payload)
+                    send_data(lorawan_packet)
+                else:
+                    print(f"Warning: Payload too large ({len(payload)} bytes)")
+            
+            # Record image to SD card if needed
+            if args.record_video or args.save_tensors:
+                data_folder = f"./data/images/{DateUtils.get_date()}/"
+                try:
+                    # Save image
+                    current_time = DateUtils.get_time()
+                    image_path = f"{data_folder}/{current_time}.jpg"
+                    FileUtils.create_folders(data_folder)
+                    picam2.capture_file(image_path)
+                    
+                    # Process video if needed
+                    if args.record_video and video_recorder:
+                        video_recorder.process_image(image_path)
+                except Exception as e:
+                    print(f"Error saving image: {e}")
+            
+            # Wait before next capture
+            time.sleep(1)
+            
+    except KeyboardInterrupt:
+        print("Program terminated by user")
+        save_frame_counter(frame_counter)
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        save_frame_counter(frame_counter)
