@@ -29,6 +29,9 @@ dev_addr = 0x01020304  # Your device address
 app_s_key = (0x01020304050607080910111213141516).to_bytes(16, "big")  # Your AppSKey
 nwk_s_key = (0x01020304050607080910111213141516).to_bytes(16, "big")  # Your NwkSKey
 frame_counter = 0
+detection_buffer = []
+last_transmit_time = time.time()
+TRANSMIT_INTERVAL = 3
 
 # Detection parameters
 last_detections = []
@@ -287,6 +290,7 @@ if __name__ == "__main__":
             last_results = parse_detections(metadata)
             
             # Filter detections for people
+            current_time = time.time()
             people_detections = [
                 detection for detection in last_results
                 if person_class_id is not None and int(detection.category) == person_class_id
@@ -294,13 +298,17 @@ if __name__ == "__main__":
             
             # If people are detected, transmit their data
             if people_detections:
-                print(f"Detected {len(people_detections)} people in frame")
+                detection_buffer.extend(people_detections)
+                print(f"Added {len(people_detections)} detections to buffer")
+                
+            if current_time - last_transmit_time >= TRANSMIT_INTERVAL and detection_buffer:
+                print(f"Transmitted {len(detection_buffer)} detections")
                 
                 # Create payload with person count and detection data
-                payload = bytes([len(people_detections)])  # First byte is count
+                payload = bytes([len(detection_buffer)])  # First byte is count
                 
                 # Add each person's detection data
-                for detection in people_detections:
+                for detection in detection_buffer:
                     payload += encode_detection_for_lorawan(detection)
                 
                 # Prepare and send LoRaWAN packet
@@ -309,6 +317,9 @@ if __name__ == "__main__":
                     send_data(lorawan_packet)
                 else:
                     print(f"Warning: Payload too large ({len(payload)} bytes)")
+                    
+                detection_buffer = []
+                last_transmit_time = current_time
             
             # Record image to SD card if needed
             if args.record_video or args.save_tensors:
@@ -331,6 +342,12 @@ if __name__ == "__main__":
             
     except KeyboardInterrupt:
         print("Program terminated by user")
+        if detection_buffer:
+            payload = bytes([len(detection_buffer)])
+            for detection in detection_buffer:
+                payload = encode_detection_for_loraan_packet(detection)
+            lorawan_packet = prepare_lorawan_packet(payload)
+            send_data(lorawan_packet)
         save_frame_counter(frame_counter)
     except Exception as e:
         print(f"Unexpected error: {e}")
