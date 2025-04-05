@@ -6,7 +6,8 @@ import argparse
 import cv2
 import numpy as np
 from functools import lru_cache
-
+currentdir = os.path.dirname(os.path.realpath(__file__))
+sys.path.append(os.path.dirname(os.path.dirname(currentdir)))
 # Import IMX500 Camera modules
 from picamera2 import MappedArray, Picamera2
 from picamera2.devices import IMX500
@@ -247,26 +248,26 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--save_tensors', action='store_true', help='Save tensor data')
     parser.add_argument('--record_video', action='store_true', help='Record video from images')
-    parser.add_argument('--model', type=str, default="./imx500-models-backup/imx500_network_yolov8n_pp.rpk", 
+    parser.add_argument('--model', type=str, default="network.rpk", 
                       help='Path to the detection model')
     args = parser.parse_args()
 
     # Register exit handler to save frame counter
     atexit.register(exit_handler)
-
-    # Initialize IMX500 with model
-    imx500 = IMX500(args.model)
-    intrinsics = imx500.network_intrinsics
     
-    # Initialize Picamera2
-    picam2 = Picamera2()
+    model = "imx500_network_yolov8n_pp.rpk"
+    
+    imx500 = IMX500(model)
+    intrinsics = imx500.network_intrinsics
+
+    picam2 = Picamera2(imx500.camera_num)
     config = picam2.create_preview_configuration(
-        main={"size": (640, 480)},
-        transform=imx500.transform,
-        buffer_count=4
+	controls = {},
+	buffer_count=12
     )
-    picam2.configure(config)
-    picam2.start()
+
+    imx500.show_network_fw_progress_bar()
+    picam2.start(config, show_preview=False)
     
     # Get person class ID
     person_class_id = find_person_class_id()
@@ -326,7 +327,7 @@ if __name__ == "__main__":
                     print(f"Error saving image: {e}")
             
             # Wait before next capture
-            time.sleep(1)
+            time.sleep(5)
             
     except KeyboardInterrupt:
         print("Program terminated by user")
