@@ -198,9 +198,9 @@ def main():
             print(json.dumps(aws_payload, indent=2))
             
             # Decode and print the original payload for verification
-            print("\nDecoded Payload:")
-            decoded_payload = json.loads(base64.b64decode(aws_payload['PayloadData']).decode('utf-8'))
-            print(json.dumps(decoded_payload, indent=2))
+            #print("\nDecoded Payload:")
+            #decoded_payload = json.loads(base64.b64decode(aws_payload['PayloadData']).decode('utf-8'))
+            #print(json.dumps(decoded_payload, indent=2))
             
             # Send data via LoRa
             send_data(lorawan_packet)

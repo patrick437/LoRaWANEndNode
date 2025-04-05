@@ -1,4 +1,4 @@
-import os, sys
+import os, sys, atexit
 currentdir = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.dirname(os.path.dirname(currentdir)))
 from LoRaRF import SX126x
@@ -15,6 +15,9 @@ frame_counter = 0
 # New function that prepares LoRaWAN packet
 def prepare_lorawan_packet(payload):
     global frame_counter
+    
+    if frame_counter == 0:
+        frame_counter == load_frame_counter()
     
     # Convert to bytes if needed
     if not isinstance(payload, bytes):
@@ -33,7 +36,7 @@ def prepare_lorawan_packet(payload):
     
     # Increment counter for next transmission
     frame_counter += 1
-    
+    print(encrypted_payload)
     return lorawan_packet
 
 def send_data(data_bytes):
@@ -49,7 +52,7 @@ def send_data(data_bytes):
     LoRa.setDio2RfSwitch()
     # Set frequency to 868 Mhz
     print("Set frequency to 868 Mhz")
-    LoRa.setFrequency(868000000)
+    LoRa.setFrequency(868100000)
 
     # Set TX power, default power for SX1262 and SX1268 are +22 dBm and for SX1261 is +14 dBm
     # This function will set PA config with optimal setting for requested TX power
@@ -70,7 +73,7 @@ def send_data(data_bytes):
     print("Set packet parameters:\n\tExplicit header type\n\tPreamble length = 12\n\tPayload Length = 15\n\tCRC on")
     headerType = LoRa.HEADER_EXPLICIT                               # Explicit header mode
     preambleLength = 12                                             # Set preamble length to 12
-    payloadLength = 15                                              # Initialize payloadLength to 15
+    payloadLength = 32                                              # Initialize payloadLength to 15
     crcType = True                                                  # Set CRC enable
     LoRa.setLoRaPacket(headerType, preambleLength, payloadLength, crcType)
 
@@ -110,20 +113,47 @@ def send_data(data_bytes):
     except :
         LoRa.end()
         
+def save_frame_counter(counter):
+    with open('frame_counter.txt', 'w') as f:
+        f.write(str(counter))
+        
+def load_frame_counter():
+    try:
+        with open('frame_counter.txt', 'r') as f:
+            return int(f.read().strip())
+    except FileNotFoundError:
+        return 0
+        
+def exit_handler():
+    global frame_counter
+    save_frame_counter(frame_counter)
+    print("frame counter dsaved on exit")
+        
 def main():
-    while True:
-        # Your sensor data collection code
-        sensor_data = b"\x01\x02\x03\x04"  # Replace with actual sensor data
+    
+    atexit.register(exit_handler)
+    
+    try:
+        while True:
+            # Your sensor data collection code
+            sensor_data = b"\x01\x02\x03\x04"  # Replace with actual sensor data
+            
+            # Prepare LoRaWAN packet
+            lorawan_packet = prepare_lorawan_packet(sensor_data)
+            
+            # Send using your working function
+            send_data(lorawan_packet)
+            
+            # Wait as needed
+            import time
+            time.sleep(1)
+    except KeyboardInterrupt:
+        save_frame_counter(frame_counter)
+    
+    except Exception as e:
+        print("Unexpected Error: {e}")
+        save_frame_counter(frame_counter)
         
-        # Prepare LoRaWAN packet
-        lorawan_packet = prepare_lorawan_packet(sensor_data)
-        
-        # Send using your working function
-        send_data(lorawan_packet)
-        
-        # Wait as needed
-        import time
-        time.sleep(60)
 
 if __name__ == "__main__":
     main()
