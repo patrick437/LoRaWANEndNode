@@ -289,6 +289,7 @@ if __name__ == "__main__":
     parser.add_argument('--display', action='store_true', help='Display video with detections using cv2.imshow')
     parser.add_argument('--display_every', type=int, default=10, 
                       help='Display every N frames to reduce processing load (default: 10)')
+    parser.add_argument('--save_detections', action='store_true', help='Save images with detection boxes')
     args = parser.parse_args()
 
     # Register exit handler to save frame counter
@@ -390,6 +391,20 @@ if __name__ == "__main__":
                         video_recorder.process_image(image_path)
                 except Exception as e:
                     print(f"Error saving image: {e}")
+
+            
+            if args.save_detections and (frame_count % args.display_every == 0 or people_detections):
+                # Create folder if it doesn't exist
+                detections_folder = f"./data/detections/{DateUtils.get_date()}/"
+                FileUtils.create_folders(detections_folder)
+                
+                # Draw detections on the frame
+                annotated_frame = draw_detections_on_frame(frame, last_results)
+                
+                # Save the annotated frame
+                detection_path = f"{detections_folder}/{DateUtils.get_time()}_annotated.jpg"
+                cv2.imwrite(detection_path, annotated_frame)
+                print(f"Saved annotated frame to {detection_path}")
             
             # Wait before next capture
             time.sleep(5)
