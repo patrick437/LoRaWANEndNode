@@ -138,6 +138,18 @@ def load_frame_counter():
             return int(f.read().strip())
     except FileNotFoundError:
         return 0
+
+def warm_up_camera():
+    """Warm up the camera and model by capturing a few frames"""
+    print("Warming up camera and model...")
+    for i in range(3):  # Capture 3 warm-up frames
+        frame = picam2.capture_array()
+        metadata = picam2.capture_metadata()
+        # Try to get outputs but don't process them yet
+        outputs = imx500.get_outputs(metadata, add_batch=True)
+        print(f"Warm-up frame {i+1}: {'outputs received' if outputs is not None else 'no outputs'}")
+        time.sleep(0.5)
+    print("Warm-up complete")
         
 def exit_handler():
     """Handle clean exit by saving frame counter"""
@@ -323,6 +335,7 @@ if __name__ == "__main__":
     )
 
     imx500.show_network_fw_progress_bar()
+    warm_up_camera()
     picam2.start(config, show_preview=False)
     
     # Get person class ID
