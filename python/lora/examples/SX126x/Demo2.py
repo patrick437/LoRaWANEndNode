@@ -179,10 +179,26 @@ def parse_detections(metadata: dict):
 
 @lru_cache
 def get_labels():
-    """Get model labels"""
+    """Get model labels with better error handling"""
+    global intrinsics
+    
+    print(f"get_labels called, intrinsics: {intrinsics}")
+    
+    if intrinsics is None:
+        print("WARNING: intrinsics is None, returning default labels")
+        return ["car"]  # Default for car-only model
+        
+    if not hasattr(intrinsics, 'labels'):
+        print("WARNING: intrinsics has no 'labels' attribute, returning default labels")
+        return ["car"]  # Default for car-only model
+    
+    print(f"Original labels from intrinsics: {intrinsics.labels}")
+    
     labels = intrinsics.labels
-    if intrinsics.ignore_dash_labels:
+    if hasattr(intrinsics, 'ignore_dash_labels') and intrinsics.ignore_dash_labels:
         labels = [label for label in labels if label and label != "-"]
+        print(f"Labels after filtering: {labels}")
+    
     return labels
 
 def encode_detection_for_lorawan(detection):
