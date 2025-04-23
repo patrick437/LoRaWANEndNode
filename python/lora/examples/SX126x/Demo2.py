@@ -158,36 +158,56 @@ def exit_handler():
     print("Frame counter saved on exit")
 
 def parse_detections(metadata: dict):
-    """Parse the output tensor into detected objects, scaled to the ISP out."""
+    """Parse the output tensor into detected objects, with better error handling."""
     global last_detections
-    bbox_normalization = intrinsics.bbox_normalization
+    
+    # Handle None intrinsics
+    if intrinsics is None:
+        print("WARNING: intrinsics is None, cannot parse detections")
+        return last_detections
+    
+    # Safely get bbox_normalization with a default value
+    bbox_normalization = getattr(intrinsics, 'bbox_normalization', False)
+    print(f"Using bbox_normalization: {bbox_normalization}")
 
+    # Get model outputs
     np_outputs = imx500.get_outputs(metadata, add_batch=True)
     input_w, input_h = imx500.get_input_size()
     if np_outputs is None:
+        print("No outputs received from model")
         return last_detections
+    
+    # Handle different postprocessing methods
+    try:
+        if hasattr(intrinsics, 'postprocess') and intrinsics.postprocess == "nanodet":
+            boxes, scores, classes = \
+                postprocess_nanodet_detection(outputs=np_outputs[0], conf=threshold, iou_thres=iou,
+                                            max_out_dets=max_detections)[0]
+            from picamera2.devices.imx500.postprocess import scale_boxes
+            boxes = scale_boxes(boxes, 1, 1, input_h, input_w, False, False)
+        else:
+            # Standard processing
+            boxes, scores, classes = np_outputs[0][0], np_outputs[1][0], np_outputs[2][0]
+            if bbox_normalization:
+                boxes = boxes / input_h
+
+            boxes = np.array_split(boxes, 4, axis=1)
+            boxes = zip(*boxes)
+
+        # Create detection objects
+        last_detections = [
+            Detection(box, category, score, metadata)
+            for box, score, category in zip(boxes, scores, classes)
+            if score > threshold
+        ]
         
-    if intrinsics.postprocess == "nanodet":
-        boxes, scores, classes = \
-            postprocess_nanodet_detection(outputs=np_outputs[0], conf=threshold, iou_thres=iou,
-                                          max_out_dets=max_detections)[0]
-        from picamera2.devices.imx500.postprocess import scale_boxes
-        boxes = scale_boxes(boxes, 1, 1, input_h, input_w, False, False)
-    else:
-        boxes, scores, classes = np_outputs[0][0], np_outputs[1][0], np_outputs[2][0]
-        if bbox_normalization:
-            boxes = boxes / input_h
-
-        boxes = np.array_split(boxes, 4, axis=1)
-        boxes = zip(*boxes)
-
-    last_detections = [
-        Detection(box, category, score, metadata)
-        for box, score, category in zip(boxes, scores, classes)
-        if score > threshold
-    ]
-
-    return last_detections
+        return last_detections
+    
+    except Exception as e:
+        print(f"Error in parse_detections: {e}")
+        import traceback
+        traceback.print_exc()
+        return last_detections
 
 @lru_cache
 def get_labels():
