@@ -162,19 +162,20 @@ def parse_detections(metadata: dict):
     global last_detections
     
     # Add this code right here:
-if intrinsics is None:
-    from picamera2.devices.imx500 import NetworkIntrinsics
-    intrinsics = NetworkIntrinsics()
-    intrinsics.task = "object detection"
-    intrinsics.bbox_normalization = False
-    intrinsics.labels = ["car"]  # Default to car detection
-    intrinsics.ignore_dash_labels = False
-    intrinsics.bbox_order = "yx"
-    print("Created fallback intrinsics")
+    if intrinsics is None:
+        from picamera2.devices.imx500 import NetworkIntrinsics
+        intrinsics = NetworkIntrinsics()
+        intrinsics.task = "object detection"
+        intrinsics.bbox_normalization = False
+        intrinsics.labels = ["car"]  # Default to car detection
+        intrinsics.ignore_dash_labels = False
+        intrinsics.bbox_order = "yx"
+        print("Created fallback intrinsics")
     
     # Safely get bbox_normalization with a default value
     bbox_normalization = getattr(intrinsics, 'bbox_normalization', False)
-    print(f"Using bbox_normalization: {bbox_normalization}")
+    # Safely get bbox_order with a default value
+    bbox_order = getattr(intrinsics, 'bbox_order', 'yx')
 
     # Get model outputs
     np_outputs = imx500.get_outputs(metadata, add_batch=True)
