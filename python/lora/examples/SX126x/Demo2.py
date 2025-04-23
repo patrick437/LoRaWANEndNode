@@ -356,6 +356,17 @@ if __name__ == "__main__":
     imx500 = IMX500(model)
     intrinsics = imx500.network_intrinsics
 
+    # Add fallback intrinsics immediately
+    if intrinsics is None:
+        from picamera2.devices.imx500 import NetworkIntrinsics
+        intrinsics = NetworkIntrinsics()
+        intrinsics.task = "object detection"
+        intrinsics.bbox_normalization = False
+        intrinsics.labels = ["car"]
+        intrinsics.ignore_dash_labels = False
+        intrinsics.bbox_order = "yx"
+        print("Created fallback intrinsics")
+
     picam2 = Picamera2(imx500.camera_num)
     config = picam2.create_preview_configuration(
         controls = {},
