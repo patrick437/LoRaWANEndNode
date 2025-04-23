@@ -374,7 +374,7 @@ if __name__ == "__main__":
     )
 
     imx500.show_network_fw_progress_bar()
-    warm_up_camera()
+    #warm_up_camera()
     picam2.start(config, show_preview=False)
     
     # Get person class ID
