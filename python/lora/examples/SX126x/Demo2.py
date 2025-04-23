@@ -160,8 +160,9 @@ def exit_handler():
 def parse_detections(metadata: dict):
     """Parse the output tensor into detected objects, with better error handling."""
     global last_detections
+    global intrinsics  # Add this line
     
-    # Add this code right here:
+    # Now you can modify intrinsics
     if intrinsics is None:
         from picamera2.devices.imx500 import NetworkIntrinsics
         intrinsics = NetworkIntrinsics()
