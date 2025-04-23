@@ -261,7 +261,7 @@ def find_person_class_id():
     """Find the class ID corresponding to 'person' in the model labels"""
     labels = get_labels()
     for i, label in enumerate(labels):
-        if label.lower() in ['person', 'human', 'pedestrian']:
+        if label.lower() in ['car']:
             return i
     return None  # Person class not found
 
@@ -350,7 +350,7 @@ if __name__ == "__main__":
     # Register exit handler to save frame counter
     atexit.register(exit_handler)
     
-    model = "imx500_network_yolov8n_pp.rpk"
+    model = "traffic.rpk"
     
     imx500 = IMX500(model)
     intrinsics = imx500.network_intrinsics
