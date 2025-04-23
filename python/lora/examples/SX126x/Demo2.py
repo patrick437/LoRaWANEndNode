@@ -161,10 +161,16 @@ def parse_detections(metadata: dict):
     """Parse the output tensor into detected objects, with better error handling."""
     global last_detections
     
-    # Handle None intrinsics
-    if intrinsics is None:
-        print("WARNING: intrinsics is None, cannot parse detections")
-        return last_detections
+    # Add this code right here:
+if intrinsics is None:
+    from picamera2.devices.imx500 import NetworkIntrinsics
+    intrinsics = NetworkIntrinsics()
+    intrinsics.task = "object detection"
+    intrinsics.bbox_normalization = False
+    intrinsics.labels = ["car"]  # Default to car detection
+    intrinsics.ignore_dash_labels = False
+    intrinsics.bbox_order = "yx"
+    print("Created fallback intrinsics")
     
     # Safely get bbox_normalization with a default value
     bbox_normalization = getattr(intrinsics, 'bbox_normalization', False)
